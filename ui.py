@@ -10,7 +10,9 @@ from game_state import BowlingGame
 from human_controller import HumanController
 from physics import (
     BALL_RADIUS,
+    HOOK_ACCEL,
     LANE_HALF_WIDTH,
+    OIL_HOOK_MULT,
     PIT_END,
     LaneSimulation,
     MAX_ANGLE_DEG,
@@ -25,6 +27,7 @@ CX = SCREEN_W // 2
 
 COL_BG = (18, 18, 26)
 COL_LANE = (176, 138, 92)
+COL_LANE_OIL = (191, 156, 112)  # subtle sheen where the oil pattern lies
 COL_LANE_EDGE = (120, 90, 56)
 COL_GUTTER = (52, 52, 62)
 COL_PIN = (245, 245, 240)
@@ -68,7 +71,7 @@ class Renderer:
 
     # --- lane & entities ---
 
-    def draw_lane(self) -> None:
+    def draw_lane(self, oil_length: float = 0.0) -> None:
         lane_edge = LANE_HALF_WIDTH
         gutter_edge = LANE_HALF_WIDTH * 1.28
         pts = [project(-gutter_edge, 0), project(gutter_edge, 0),
@@ -77,6 +80,14 @@ class Renderer:
         pts = [project(-lane_edge, 0), project(lane_edge, 0),
                project(lane_edge, PIT_END), project(-lane_edge, PIT_END)]
         pygame.draw.polygon(self.screen, COL_LANE, [(p[0], p[1]) for p in pts])
+        if oil_length > 0.0:
+            pts = [project(-lane_edge, 0), project(lane_edge, 0),
+                   project(lane_edge, oil_length), project(-lane_edge, oil_length)]
+            pygame.draw.polygon(self.screen, COL_LANE_OIL, [(p[0], p[1]) for p in pts])
+            a, b = project(-lane_edge, oil_length), project(lane_edge, oil_length)
+            pygame.draw.line(self.screen, COL_LANE_EDGE, (a[0], a[1]), (b[0], b[1]), 1)
+            self.text(f"oil {oil_length:.1f}m", int(b[0]) + 8, int(b[1]) - 6,
+                      COL_DIM, self.font_small)
         # Board seams for depth.
         for i in range(1, 8):
             x = -lane_edge + i * (2 * lane_edge / 8)
@@ -125,13 +136,18 @@ class Renderer:
         pygame.draw.circle(self.screen, (120, 160, 240), (x - r * 0.3, y - r * 0.3),
                            max(1, r * 0.3))
 
-    def draw_aim(self, ctrl: HumanController) -> None:
+    def draw_aim(self, ctrl: HumanController, oil_length: float = 0.0) -> None:
         """Dotted preview line plus angle/spin/power readouts."""
         a = math.radians(ctrl.angle_deg)
+        v = 7.0  # preview at mid power; friction ignored
         steps = 24
         for i in range(1, steps):
             d = i / steps * (PIT_END * 0.97)
-            wx = math.sin(a) * d + 0.5 * ctrl.spin * 0.24 * (d / 7.0) ** 2
+            t_dry = max(0.0, (d - oil_length) / v)
+            t_oil = min(d, oil_length) / v
+            hook = 0.5 * ctrl.spin * HOOK_ACCEL * (
+                OIL_HOOK_MULT * t_oil ** 2 + t_dry * (t_dry + 2 * OIL_HOOK_MULT * t_oil))
+            wx = math.sin(a) * d + hook
             if abs(wx) > LANE_HALF_WIDTH:
                 break
             x, y, s = project(wx, d)
@@ -152,6 +168,24 @@ class Renderer:
         fill = int((mw - 2) * ctrl.power)
         c = (int(80 + 175 * ctrl.power), int(220 - 120 * ctrl.power), 60)
         pygame.draw.rect(self.screen, c, (mx + 1, my + 1, fill, mh - 2))
+
+    def draw_trail(self, trail: list[tuple[float, float]]) -> None:
+        for i, (wx, wy) in enumerate(trail):
+            x, y, s = project(wx, wy)
+            fade = (i + 1) / len(trail)
+            c = (int(40 * fade), int(90 * fade), int(200 * fade))
+            pygame.draw.circle(self.screen, c, (x, y),
+                               max(1, 5 * s * fade),
+                               )
+
+    def draw_particles(self, particles: list[list]) -> None:
+        for x, y, _vx, _vy, life, color in particles:
+            if life > 0:
+                pygame.draw.circle(self.screen, color, (x, y), max(1, int(3 * life)))
+
+    def draw_flash(self, strength: float) -> None:
+        v = int(110 * strength)
+        self.screen.fill((v, v, v // 2), special_flags=pygame.BLEND_RGB_ADD)
 
     # --- scoreboard ---
 
@@ -260,8 +294,16 @@ class Renderer:
             f"AI: {agent.total_throws} throws trained | "
             f"{agent.games_played} games | epsilon {agent.epsilon:.3f}",
             CX, 470, COL_DIM, self.font, center=True)
+        st = agent.stats
+        self.text(
+            f"career: you {st['you_wins']} — {st['ai_wins']} AI "
+            f"({st['draws']} draws) | high scores: you {st['you_high']} · "
+            f"AI {st['ai_high']}",
+            CX, 500, COL_DIM, self.font, center=True)
         self.text("aim ←/→   spin Z/X   power: hold+release SPACE",
-                  CX, 520, COL_DIM, self.font, center=True)
+                  CX, 545, COL_DIM, self.font, center=True)
+        self.text("each match rolls a random oil pattern — the ball only hooks "
+                  "past the oil", CX, 570, COL_DIM, self.font_small, center=True)
 
     def draw_game_over(self, games: list[BowlingGame], names: list[str]) -> None:
         h, a = games[0].score(), games[1].score()

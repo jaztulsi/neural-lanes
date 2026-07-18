@@ -23,7 +23,9 @@ PIN_MASS = 1.55
 BALL_FRICTION = 0.30         # m/s^2 deceleration on the lane
 PIN_FRICTION = 3.2           # pins scrub off speed quickly
 RESTITUTION = 0.42
-HOOK_ACCEL = 0.24            # lateral accel per unit of spin
+HOOK_ACCEL = 0.55            # lateral accel per unit of spin (dry lane)
+OIL_HOOK_MULT = 0.15         # hook barely grips while the ball is on the oil
+MIN_OIL, MAX_OIL = 7.5, 13.5  # per-match oil pattern length range (metres)
 
 KNOCK_DISPLACEMENT = 0.075   # a pin displaced this far counts as down
 SUBSTEP = 1.0 / 240.0
@@ -93,13 +95,14 @@ class ThrowOutcome:
 class LaneSimulation:
     """Simulates one throw against the currently standing pins."""
 
-    def __init__(self, standing: list[bool]) -> None:
+    def __init__(self, standing: list[bool], oil_length: float = 0.0) -> None:
         self.pins: list[Pin] = [
             Pin(i, Body(x, y), (x, y))
             for i, (x, y) in enumerate(PIN_SPOTS)
             if standing[i]
         ]
         self.ball: Body | None = None
+        self.oil_length = oil_length  # 0 = dry lane, full hook everywhere
         self.in_gutter = False
         self.time = 0.0
         self.done = False
@@ -139,7 +142,8 @@ class LaneSimulation:
 
         if ball is not None and ball.active:
             if not self.in_gutter:
-                ball.vx += self._spin * HOOK_ACCEL * dt
+                grip = OIL_HOOK_MULT if ball.y < self.oil_length else 1.0
+                ball.vx += self._spin * HOOK_ACCEL * grip * dt
             _apply_friction(ball, BALL_FRICTION, dt)
             ball.x += ball.vx * dt
             ball.y += ball.vy * dt

@@ -21,7 +21,7 @@ POWERS: np.ndarray = np.linspace(5.5, 8.5, 5)
 SPINS: tuple[float, ...] = (-0.7, 0.0, 0.7)
 N_ACTIONS = len(ANGLES) * len(POWERS) * len(SPINS)
 
-STATE_DIM = 13  # 10 pin bits + frame + ball + score gap
+STATE_DIM = 14  # 10 pin bits + frame + ball + score gap + oil length
 
 GAMMA = 0.95
 LR = 3e-4
@@ -45,13 +45,15 @@ def encode_state(
     frame_idx: int,
     ball_idx: int,
     score_gap: int,
+    oil_length: float,
 ) -> np.ndarray:
-    """State vector: pin bits, normalized frame/ball, clipped score gap."""
+    """State vector: pin bits, normalized frame/ball, clipped score gap, oil."""
     vec = np.zeros(STATE_DIM, dtype=np.float32)
     vec[:10] = [1.0 if p else 0.0 for p in pins_standing]
     vec[10] = frame_idx / 9.0
     vec[11] = ball_idx / 2.0
     vec[12] = float(np.clip(score_gap / 60.0, -1.0, 1.0))
+    vec[13] = oil_length / 18.29  # lane length; the oil pattern this match
     return vec
 
 
@@ -116,8 +118,15 @@ class BowlingAgent:
         self.games_played = 0
         self.loss_history: deque[float] = deque(maxlen=300)
         self.reward_history: deque[float] = deque(maxlen=300)
+        # career match record (human vs AI), persisted with the checkpoint
+        self.stats = {"you_wins": 0, "ai_wins": 0, "draws": 0,
+                      "you_high": 0, "ai_high": 0}
         if checkpoint_path.exists():
-            self.load()
+            try:
+                self.load()
+            except Exception as e:
+                print(f"checkpoint incompatible ({e}); starting fresh")
+                self.buffer = ReplayBuffer()
 
     # --- policy ---
 
@@ -199,6 +208,7 @@ class BowlingAgent:
                 "games_played": self.games_played,
                 "loss_history": list(self.loss_history),
                 "reward_history": list(self.reward_history),
+                "stats": self.stats,
             },
             self.checkpoint_path,
         )
@@ -215,6 +225,7 @@ class BowlingAgent:
         self.games_played = ckpt["games_played"]
         self.loss_history.extend(ckpt["loss_history"])
         self.reward_history.extend(ckpt["reward_history"])
+        self.stats.update(ckpt.get("stats", {}))
 
     def reset_learning(self) -> None:
         """Wipe all learned progress (fresh network, empty buffer, no file)."""

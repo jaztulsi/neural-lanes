@@ -136,6 +136,28 @@ class BowlingGame:
         return views
 
 
+# Pins within one rack spacing of each other (1-based pin numbers).
+_PIN_ADJ = ((1, 2), (1, 3), (2, 3), (2, 4), (2, 5), (3, 5), (3, 6),
+            (4, 5), (5, 6), (4, 7), (4, 8), (5, 8), (5, 9), (6, 9),
+            (6, 10), (7, 8), (8, 9), (9, 10))
+
+
+def is_split(standing: list[bool]) -> bool:
+    """Classic split: headpin down, 2+ pins standing in disconnected groups."""
+    up = {i + 1 for i, s in enumerate(standing) if s}
+    if standing[0] or len(up) < 2:
+        return False
+    seen, todo = set(), [next(iter(up))]
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        todo += [b if a == p else a for a, b in _PIN_ADJ
+                 if p in (a, b) and (b if a == p else a) in up]
+    return seen != up
+
+
 def _marks(frame: list[int], tenth: bool) -> list[str]:
     marks: list[str] = []
     prev: int | None = None

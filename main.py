@@ -40,9 +40,10 @@ class App:
 
     # --- match setup / flow ---
 
-    def _new_match(self) -> None:
+    def _new_match(self, spectate: bool = False) -> None:
+        self.spectate = spectate  # AI vs AI exhibition (same brain, both sides)
         self.games = [BowlingGame(), BowlingGame()]
-        self.names = ["YOU", "AI"]
+        self.names = ["AI-1", "AI-2"] if spectate else ["YOU", "AI"]
         self.pins: list[list[bool]] = [[True] * 10, [True] * 10]
         self.current = HUMAN
         self.oil_len = random.uniform(MIN_OIL, MAX_OIL)  # this match's pattern
@@ -67,7 +68,7 @@ class App:
             self.pins[self.current] = [True] * 10
         self.sim = LaneSimulation(self.pins[self.current], self.oil_len)
         self.trail.clear()
-        if self.current == HUMAN:
+        if self.current == HUMAN and not self.spectate:
             self.phase = "aim"
             self.ctrl.reset_throw()
         else:
@@ -81,14 +82,15 @@ class App:
         self.phase = "rolling"
 
     def _ai_throw(self) -> None:
-        game = self.games[AI]
+        cur = self.current
+        game = self.games[cur]
         frame, ball = game.frame_ball()
-        gap = self.games[AI].score() - self.games[HUMAN].score()
-        state = encode_state(self.pins[AI], frame, ball, gap, self.oil_len)
+        gap = game.score() - self.games[1 - cur].score()
+        state = encode_state(self.pins[cur], frame, ball, gap, self.oil_len)
         action = self.agent.select_action(state)
         params = decode_action(action)
         fresh = game.needs_fresh_pins()
-        standing = sum(self.pins[AI])
+        standing = sum(self.pins[cur])
         self.pending_ai = (state, action, fresh, standing)
         spin_lbl = "L" if params.spin < 0 else "R" if params.spin > 0 else "·"
         self.last_ai_action = (
@@ -134,7 +136,7 @@ class App:
                              COL_HUMAN if self.current == HUMAN else COL_AI)
             self.sounds.crash(knocked)
 
-        if self.current == AI and self.pending_ai is not None:
+        if self.pending_ai is not None:  # set only on AI-controlled throws
             self._ai_learn(knocked, is_strike, is_spare, outcome.gutter)
 
         self.phase = "post"
@@ -145,16 +147,17 @@ class App:
                   gutter: bool) -> None:
         state, action, _fresh, _standing = self.pending_ai
         self.pending_ai = None
+        cur = self.current
         reward = throw_reward(knocked, is_strike, is_spare, gutter)
-        game = self.games[AI]
+        game = self.games[cur]
         if game.is_complete():
             done = True
             next_state = state  # unused: done masks the bootstrap term
         else:
             frame, ball = game.frame_ball()
             done = ball == 0  # frame ended -> episode boundary for TD target
-            next_pins = [True] * 10 if game.needs_fresh_pins() else self.pins[AI]
-            gap = self.games[AI].score() - self.games[HUMAN].score()
+            next_pins = [True] * 10 if game.needs_fresh_pins() else self.pins[cur]
+            gap = game.score() - self.games[1 - cur].score()
             next_state = encode_state(next_pins, frame, ball, gap, self.oil_len)
         self.agent.observe(state, action, reward, next_state, done)
         if self.agent.total_throws % SAVE_EVERY_THROWS == 0:
@@ -166,10 +169,16 @@ class App:
             self.agent.games_played += 1
             you, ai = self.games[HUMAN].score(), self.games[AI].score()
             st = self.agent.stats
-            st["you_high"] = max(st["you_high"], you)
-            st["ai_high"] = max(st["ai_high"], ai)
-            key = "you_wins" if you > ai else "ai_wins" if ai > you else "draws"
-            st[key] += 1
+            if self.spectate:  # exhibition: both scores are the AI's
+                st["ai_high"] = max(st["ai_high"], you, ai)
+                st["ai_scores"] += [you, ai]
+            else:
+                st["you_high"] = max(st["you_high"], you)
+                st["ai_high"] = max(st["ai_high"], ai)
+                st["ai_scores"].append(ai)
+                key = "you_wins" if you > ai else "ai_wins" if ai > you else "draws"
+                st[key] += 1
+            del st["ai_scores"][:-200]
             self.agent.save()
             return
         if self._frame_done:
@@ -212,6 +221,9 @@ class App:
     def _handle_event(self, event: pygame.event.Event) -> None:
         if event.type == pygame.QUIT:
             self._quit()
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_m:
+            self.sounds.toggle()
+            return
         if event.type != pygame.KEYDOWN and self.scene != "playing":
             return
         if self.scene == "menu":
@@ -223,6 +235,9 @@ class App:
                     self.confirm_reset = False
             elif event.key == pygame.K_RETURN:
                 self._new_match()
+                self.scene = "playing"
+            elif event.key == pygame.K_a:
+                self._new_match(spectate=True)
                 self.scene = "playing"
             elif event.key == pygame.K_r:
                 self.confirm_reset = True
@@ -259,7 +274,8 @@ class App:
             if self.phase_timer >= AI_THINK_TIME:
                 self._ai_throw()
         elif self.phase == "rolling":
-            settled = self.sim.step(dt * TIME_SCALE)
+            ff = 4.0 if pygame.key.get_pressed()[pygame.K_TAB] else 1.0
+            settled = self.sim.step(dt * TIME_SCALE * ff)
             ball = self.sim.ball
             if ball is not None and ball.active:
                 self.trail.append((ball.x, ball.y))
@@ -305,6 +321,8 @@ class App:
                               "release to throw   ESC menu")
             elif self.phase == "ai_think":
                 r.draw_status("AI is thinking...")
+            elif self.phase == "rolling":
+                r.draw_status("hold TAB to fast-forward")
             if self.banner and self.banner_timer < 1.6:
                 r.draw_banner(*self.banner)
         if self.flash > 0.0:

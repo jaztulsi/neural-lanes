@@ -286,10 +286,16 @@ class Renderer:
         else:
             for i, line in enumerate((
                 "ENTER  —  start match",
+                "A      —  watch AI vs AI",
                 "R      —  reset AI learning",
                 "ESC    —  quit (progress auto-saves)",
             )):
-                self.text(line, CX - 130, 290 + i * 32)
+                self.text(line, CX - 130, 280 + i * 30)
+        scores = agent.stats.get("ai_scores", [])
+        if len(scores) >= 2:
+            self._sparkline("AI learning curve (score per game)",
+                            [float(s) for s in scores],
+                            CX - 130, 396, 260, 64, COL_AI)
         self.text(
             f"AI: {agent.total_throws} throws trained | "
             f"{agent.games_played} games | epsilon {agent.epsilon:.3f}",
@@ -300,18 +306,19 @@ class Renderer:
             f"({st['draws']} draws) | high scores: you {st['you_high']} · "
             f"AI {st['ai_high']}",
             CX, 500, COL_DIM, self.font, center=True)
-        self.text("aim ←/→   spin Z/X   power: hold+release SPACE",
+        self.text("aim ←/→   spin Z/X   power: hold+release SPACE   "
+                  "TAB fast-forward   M mute",
                   CX, 545, COL_DIM, self.font, center=True)
         self.text("each match rolls a random oil pattern — the ball only hooks "
                   "past the oil", CX, 570, COL_DIM, self.font_small, center=True)
 
     def draw_game_over(self, games: list[BowlingGame], names: list[str]) -> None:
         h, a = games[0].score(), games[1].score()
-        if h > a:
-            msg, col = "YOU WIN!", COL_HUMAN
-        elif a > h:
-            msg, col = "AI WINS", COL_AI
-        else:
+        if h == a:
             msg, col = "DRAW", COL_ACCENT
+        else:
+            w = 0 if h > a else 1
+            msg = "YOU WIN!" if names[w] == "YOU" else f"{names[w]} WINS"
+            col = COL_HUMAN if w == 0 else COL_AI
         self.draw_banner(f"{msg}  {h} - {a}", col)
         self.draw_status("ENTER — back to menu")

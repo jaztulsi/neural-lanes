@@ -120,7 +120,8 @@ class BowlingAgent:
         self.reward_history: deque[float] = deque(maxlen=300)
         # career match record (human vs AI), persisted with the checkpoint
         self.stats = {"you_wins": 0, "ai_wins": 0, "draws": 0,
-                      "you_high": 0, "ai_high": 0}
+                      "you_high": 0, "ai_high": 0,
+                      "ai_scores": []}  # last 200 game scores (learning curve)
         if checkpoint_path.exists():
             try:
                 self.load()
@@ -238,6 +239,7 @@ class BowlingAgent:
         self.games_played = 0
         self.loss_history.clear()
         self.reward_history.clear()
+        self.stats["ai_scores"] = []  # learning curve resets with the brain
         self.checkpoint_path.unlink(missing_ok=True)
 
 

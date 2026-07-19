@@ -39,6 +39,7 @@ def _mix(*parts: np.ndarray) -> np.ndarray:
 
 class Sounds:
     def __init__(self) -> None:
+        self.enabled = True
         try:
             pygame.mixer.init(frequency=RATE, size=-16, channels=1)
             self.ok = True
@@ -68,23 +69,32 @@ class Sounds:
         # Gutter: sad low thud.
         self._gutter = _sound(_tone(110, 0.45, 5) + _tone(82, 0.45, 5), 0.4)
 
+    @property
+    def on(self) -> bool:
+        return self.ok and self.enabled
+
+    def toggle(self) -> bool:
+        """Flip mute; returns True if sound is now on."""
+        self.enabled = not self.enabled
+        return self.on
+
     def roll(self) -> None:
-        if self.ok:
+        if self.on:
             self._roll.play()
 
     def crash(self, pins: int) -> None:
-        if self.ok and pins > 0:
+        if self.on and pins > 0:
             self._crash.set_volume(min(1.0, 0.25 + pins * 0.08))
             self._crash.play()
 
     def strike(self) -> None:
-        if self.ok:
+        if self.on:
             self._strike.play()
 
     def spare(self) -> None:
-        if self.ok:
+        if self.on:
             self._spare.play()
 
     def gutter(self) -> None:
-        if self.ok:
+        if self.on:
             self._gutter.play()
